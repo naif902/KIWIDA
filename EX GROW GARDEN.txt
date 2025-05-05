@@ -1,0 +1,522 @@
+-- Sunder.cc Inventory Auto-Seller + Seed Spammer
+-- Ultra-Lightweight Version
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- تأكد أن السكربت LocalScript وموجود داخل StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- إنشاء واجهة المستخدم
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "EXOnTopGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- إنشاء TextLabel
+local textLabel = Instance.new("TextLabel")
+textLabel.Parent = screenGui
+textLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+textLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+textLabel.Size = UDim2.new(0.4, 0, 0.1, 0)
+textLabel.BackgroundTransparency = 0.3
+textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+textLabel.BorderSizePixel = 0
+textLabel.Text = "EX ON TOP"
+textLabel.TextColor3 = Color3.new(1, 1, 1)
+textLabel.Font = Enum.Font.GothamBold
+textLabel.TextScaled = true
+textLabel.ZIndex = 10
+
+-- إخفاء النص بعد 3 ثوانٍ
+task.delay(3, function()
+	screenGui:Destroy()
+end)
+
+
+
+-- Configuration
+local sellRemotePath = "GameEvents/Sell_Inventory"
+local buyRemotePath = "GameEvents/BuySeedStock"
+local defaultCooldown = 3
+
+-- Create the window
+local Window = Rayfield:CreateWindow({
+    Name = "EX HUB الزرع و البيع",
+    LoadingTitle = "يرجى الانتظار",
+    LoadingSubtitle = "remote spammer",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "SunderSellerConfig",
+        FileName = "Settings"
+    }
+})
+
+-- Get remotes
+local sellRemote = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents") and game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("Sell_Inventory")
+local buyRemote = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents") and game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("BuySeedStock")
+
+if not sellRemote or not buyRemote then
+    Rayfield:Notify({
+        Title = "Error",
+        Content = "Missing Sell or Buy remote!",
+        Duration = 6,
+        Image = 6023426926
+    })
+    return
+end
+
+-- state management
+local sellState = {
+    active = false,
+    count = 0,
+    cooldown = defaultCooldown,
+    lastSold = 0
+}
+
+local sellerPosition = nil
+local sellerHighlight = nil
+local highlightColor = Color3.fromRGB(0, 255, 170) -- default cyan
+
+--tabs
+local MainTab = Window:CreateTab("🕹️Controls", 4483362458)
+local SeedsTab = Window:CreateTab("🌽Seed Spammer", 4483362458)
+
+-- ===== MAIN CONTROLS =====
+MainTab:CreateSection("Core Settings")
+
+MainTab:CreateSlider({
+    Name = "Sell Cooldown (sec)",
+    Range = {1, 60},
+    Increment = 1,
+    Suffix = "s",
+    CurrentValue = defaultCooldown,
+    Flag = "CooldownSlider",
+    Callback = function(Value)
+        sellState.cooldown = Value
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto-Sell Inventory",
+    CurrentValue = false,
+    Flag = "SellerToggle",
+    Callback = function(Value)
+        sellState.active = Value
+        if Value then
+            coroutine.wrap(function()
+                while sellState.active and sellRemote do
+                    local player = game.Players.LocalPlayer
+                    local char = player.Character or player.CharacterAdded:Wait()
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+
+                    if hrp and sellerPosition then
+                        local originalCFrame = hrp.CFrame
+                        local camera = workspace.CurrentCamera
+                        local cameraCFrame = camera.CFrame
+
+                        hrp.CFrame = sellerPosition
+                        camera.CameraType = Enum.CameraType.Scriptable
+                        camera.CFrame = cameraCFrame
+
+                        task.wait(0.2)
+
+                        -- sell the items and update the count
+                        local success = pcall(function()
+                            sellRemote:FireServer()
+                            sellState.count += 1
+                            sellState.lastSold = os.time()
+                            if statsLabel then
+                                statsLabel:Set("Items Sold: "..sellState.count)
+                            end
+                        end)
+
+                        hrp.CFrame = originalCFrame
+                        task.wait(0.1)
+                        camera.CameraType = Enum.CameraType.Custom
+
+                        if not success then
+                            Rayfield:Notify({
+                                Title = "Sell Failed",
+                                Content = "Remote call error",
+                                Duration = 3,
+                                Image = 6023426926
+                            })
+                        end
+                    end
+
+                    task.wait(sellState.cooldown)
+                end
+            end)()
+        end
+    end
+})
+
+MainTab:CreateKeybind({
+    Name = "Emergency Stop",
+    CurrentKeybind = "Delete",
+    HoldToInteract = false,
+    Flag = "EmergencyStop",
+    Callback = function()
+        sellState.active = false
+        Rayfield.Flags["SellerToggle"]:Set(false)
+        Rayfield:Notify({
+            Title = "STOPPED",
+            Content = "Auto-selling disabled",
+            Duration = 3,
+            Image = 6023426926
+        })
+        for name, data in pairs(seedSpamStates) do
+            data.active = false
+            Rayfield.Flags[data.flag]:Set(false)
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Set Seller Position (Current Location)",
+    Callback = function()
+        local player = game.Players.LocalPlayer
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+
+        if hrp then
+            sellerPosition = hrp.CFrame
+            Rayfield:Notify({
+                Title = "Seller Position Set",
+                Content = "Using your current location for server teleport.",
+                Duration = 4,
+                Image = 6026568198
+            })
+
+            -- create or update highlight part
+            if not sellerHighlight then
+                local part = Instance.new("Part")
+                part.Anchored = true
+                part.CanCollide = false
+                part.Size = Vector3.new(3, 3, 3)
+                part.Material = Enum.Material.Neon
+                part.Color = highlightColor
+                part.Transparency = 0.25
+                part.Name = "SellerMarker"
+                part.Parent = workspace
+                sellerHighlight = part
+
+                -- add a label above the marker
+                local label = Instance.new("BillboardGui")
+                label.Adornee = part
+                label.Size = UDim2.new(0, 100, 0, 50)
+                label.StudsOffset = Vector3.new(0, 3, 0)
+                label.AlwaysOnTop = true
+                label.Parent = part
+
+                local textLabel = Instance.new("TextLabel")
+                textLabel.Size = UDim2.new(1, 0, 1, 0)
+                textLabel.Text = "Seller Zone"
+                textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                textLabel.BackgroundTransparency = 1
+                textLabel.TextScaled = true
+                textLabel.Parent = label
+            end
+
+            sellerHighlight.Position = sellerPosition.Position
+            sellerHighlight.Color = highlightColor
+
+            -- add animation to the highlight
+            local tweenService = game:GetService("TweenService")
+            local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true)
+            local tweenGoal = {Size = Vector3.new(3.5, 3.5, 3.5)}
+
+            local tween = tweenService:Create(sellerHighlight, tweenInfo, tweenGoal)
+            tween:Play()
+
+            -- rotate the part slowly for effect
+            coroutine.wrap(function()
+                while true do
+                    sellerHighlight.CFrame = sellerHighlight.CFrame * CFrame.Angles(0, math.rad(1), 0)
+                    task.wait(0.05)
+                end
+            end)()
+
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Couldn't find HumanoidRootPart!",
+                Duration = 4,
+                Image = 6023426926
+            })
+        end
+    end
+})
+
+MainTab:CreateColorPicker({
+    Name = "Highlight Color",
+    Color = highlightColor,
+    Flag = "HighlightColor",
+    Callback = function(Value)
+        highlightColor = Value
+        if sellerHighlight then
+            sellerHighlight.Color = highlightColor
+        end
+    end
+})
+
+-- ===== SEED SPAMMER =====
+SeedsTab:CreateSection("Select Seeds to Auto-Spam")
+
+local seedList = {
+    "Carrot", "Strawberry", "Blueberry", "Orange Tulip", "Tomato", "Corn",
+    "Daffodil", "Watermelon", "Pumpkin", "Apple", "Bamboo", "Coconut", "Cactus", "Dragon", "Mango", "Grape"
+}
+
+local seedSpamStates = {}
+
+for _, seedName in pairs(seedList) do
+    local flagName = "Spam_"..seedName:gsub(" ", "_")
+    seedSpamStates[seedName] = {
+        active = false,
+        flag = flagName
+    }
+
+    SeedsTab:CreateToggle({
+        Name = "Spam "..seedName,
+        CurrentValue = false,
+        Flag = flagName,
+        Callback = function(Value)
+            seedSpamStates[seedName].active = Value
+            if Value then
+                coroutine.wrap(function()
+                    while seedSpamStates[seedName].active do
+                        local args = { [1] = seedName }
+
+                        pcall(function()
+                            -- Fire the BuySeedStock remote for the selected seed
+                            buyRemote:FireServer(unpack(args))
+                        end)
+                        task.wait(0.2)
+                    end
+                end)()
+            end
+        end
+    })
+end
+
+-- **1. Seed Priority System**
+
+SeedsTab:CreateSlider({
+    Name = "Seed Priority (higher value = higher priority)",
+    Range = {1, 10},
+    Increment = 1,
+    Suffix = "",
+    CurrentValue = 5,
+    Flag = "SeedPrioritySlider",
+    Callback = function(Value)
+
+    end
+})
+
+-- **2. Delay Customization**
+SeedsTab:CreateSlider({
+    Name = "Seed Spam Delay (seconds)",
+    Range = {0.1, 2},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = 0.2,
+    Flag = "SeedDelaySlider",
+    Callback = function(Value)
+        seedSpamDelay = Value
+    end
+})
+
+-- **3. Randomized Seed Spamming**
+SeedsTab:CreateToggle({
+    Name = "Randomize Seed Spamming",
+    CurrentValue = false,
+    Flag = "RandomizeSeedToggle",
+    Callback = function(Value)
+        randomizeSeeds = Value
+        if randomizeSeeds then
+            -- Implement random selection of seeds and start spamming them
+            coroutine.wrap(function()
+                while randomizeSeeds do
+                    local randomSeed = seedList[math.random(1, #seedList)]
+                    local args = { [1] = randomSeed }
+
+                    pcall(function()
+                        buyRemote:FireServer(unpack(args))
+                    end)
+                    task.wait(seedSpamDelay)
+                end
+            end)()
+        end
+    end
+})
+
+-- **4. Stop All Seed Spammers Button**
+
+SeedsTab:CreateButton({
+    Name = "Stop All Seed Spammers",
+    Callback = function()
+        for seedName, data in pairs(seedSpamStates) do
+            data.active = false
+            Rayfield.Flags[data.flag]:Set(false)
+        end
+        Rayfield:Notify({
+            Title = "All Seed Spammers Stopped",
+            Content = "All active seed spammers have been disabled.",
+            Duration = 5,
+            Image = 6023426926
+        })
+    end
+})
+
+-- Config
+local sellRemotePath = "GameEvents/Sell_Inventory"
+local buyRemotePath = "GameEvents/BuySeedStock"
+local defaultCooldown = 3
+
+
+-- Get remotes
+local sellRemote = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents") and game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("Sell_Inventory")
+local buyRemote = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents") and game:GetService("ReplicatedStorage").GameEvents:FindFirstChild("BuySeedStock")
+
+-- Harvest tab
+
+local HarvestTab = Window:CreateTab("🚜Auto Harverster", 4483362458)
+
+-- Variables
+local harvestStates = {
+    fireProximity = false,
+    fireLoop = nil,
+    fireDelay = 0.5,
+    fireRange = 15,
+    fovCircleRadius = 10
+}
+
+-- function to create and update FOV circle
+local function createFovCircle()
+    local player = game.Players.LocalPlayer
+    local character = player.Character
+    if not character then return end
+
+    local fovCircle = Instance.new("Part")
+    fovCircle.Shape = Enum.PartType.Ball
+    fovCircle.Size = Vector3.new(harvestStates.fovCircleRadius * 2, harvestStates.fovCircleRadius * 2, harvestStates.fovCircleRadius * 2)
+    fovCircle.Position = character.HumanoidRootPart.Position - Vector3.new(0, 5, 0)
+    fovCircle.Anchored = true
+    fovCircle.CanCollide = false
+    fovCircle.Parent = workspace
+    fovCircle.Material = Enum.Material.ForceField
+    fovCircle.Color = Color3.fromRGB(255, 0, 0)
+    fovCircle.Reflectance = 0
+    fovCircle.Transparency = 0
+
+    game:GetService("RunService").Heartbeat:Connect(function()
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            fovCircle.Position = character.HumanoidRootPart.Position - Vector3.new(0, 5, 0)
+        end
+    end)
+
+    return fovCircle
+end
+
+local fovCircle = createFovCircle()
+
+-- function to fire proximity prompts within range and on-screen
+local function fireProximityPrompts()
+    local player = game.Players.LocalPlayer
+    local character = player.Character or player.CharacterAdded:Wait()
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
+
+    if not hrp or not camera then return end
+
+    if fireproximityprompt then
+        for _, descendant in ipairs(workspace:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") and descendant.Parent then
+                local parent = descendant.Parent
+                local promptPosition
+
+                if parent:IsA("Model") and parent.PrimaryPart then
+                    promptPosition = parent.PrimaryPart.Position
+                elseif parent:IsA("BasePart") then
+                    promptPosition = parent.Position
+                end
+
+                if promptPosition then
+                    local distance = (hrp.Position - promptPosition).Magnitude
+                    if distance <= harvestStates.fireRange then
+                        local screenPoint, onScreen = camera:WorldToViewportPoint(promptPosition)
+                        if onScreen then
+                            pcall(function()
+                                fireproximityprompt(descendant)
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    else
+        notify("Incompatible Exploit", "Your exploit does not support this command (missing fireproximityprompt)")
+    end
+end
+
+-- Toggle for firing proximity prompts
+HarvestTab:CreateToggle({
+    Name = "Enable Fire Proximity Prompts",
+    CurrentValue = false,
+    Callback = function(Value)
+        harvestStates.fireProximity = Value
+        if Value then
+            if not harvestStates.fireLoop then
+                harvestStates.fireLoop = task.spawn(function()
+                    while harvestStates.fireProximity do
+                        fireProximityPrompts()
+                        task.wait(harvestStates.fireDelay)
+                    end
+                end)
+            end
+        else
+            if harvestStates.fireLoop then
+                task.cancel(harvestStates.fireLoop)
+                harvestStates.fireLoop = nil
+            end
+        end
+    end
+})
+
+-- Slider for fire rate delay
+HarvestTab:CreateSlider({
+    Name = "Fire Rate Delay (seconds)",
+    Range = {0.5, 1},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = harvestStates.fireDelay,
+    Callback = function(Value)
+        harvestStates.fireDelay = Value
+    end
+})
+
+-- Slider for fire range and FOV circle radius
+HarvestTab:CreateSlider({
+    Name = "Fire Range & FOV Circle Radius (studs)",
+    Range = {5, 15},
+    Increment = 1,
+    Suffix = "studs",
+    CurrentValue = harvestStates.fireRange,
+    Callback = function(Value)
+        harvestStates.fireRange = Value
+        harvestStates.fovCircleRadius = Value
+        if fovCircle then
+            fovCircle.Size = Vector3.new(Value * 2, Value * 2, Value * 2)
+        end
+    end
+})
+
+-- Initialize
+Rayfield:Notify({
+    Title = "Auto Harvest Loaded",
+    Content = "Script is ready to use!",
+    Duration = 5,
+    Image = 4483362458,
+})
